@@ -49,6 +49,9 @@ interface QueueItem {
 }
 
 export class WebInterface {
+  private static instance: WebInterface | null = null;
+  private static portInUse = new Set<number>();
+  
   private app: Application;
   private server: any;
   private apiClient: ApiClient;
@@ -60,8 +63,9 @@ export class WebInterface {
   private removeDocTool: RemoveDocumentationTool;
   private extractUrlsTool: ExtractUrlsTool;
   private queuePath: string;
+  private port: number = 3030;
 
-  constructor(apiClient: ApiClient) {
+  private constructor(apiClient: ApiClient) {
     this.apiClient = apiClient;
     this.app = express();
     this.queuePath = join(rootDir, "queue.txt");
@@ -472,10 +476,42 @@ export class WebInterface {
     this.app.use(errorHandler);
   }
 
-  start(port: number = 3030) {
-    this.server = this.app.listen(port, () => {
-      console.log(`Web interface running at http://localhost:${port}`);
-    });
+  public static getInstance(apiClient: ApiClient): WebInterface {
+    if (!WebInterface.instance) {
+      WebInterface.instance = new WebInterface(apiClient);
+    }
+    return WebInterface.instance;
+  }
+
+  private async findAvailablePort(startPort: number = 3030): Promise<number> {
+    let port = startPort;
+    while (WebInterface.portInUse.has(port)) {
+      port++;
+    }
+    return port;
+  }
+
+  async start(port: number = 3030) {
+    try {
+      this.port = await this.findAvailablePort(port);
+      WebInterface.portInUse.add(this.port);
+      
+      this.server = this.app.listen(this.port, () => {
+        console.log(`Web interface running at http://localhost:${this.port}`);
+      });
+      
+      this.server.on('error', (err: NodeJS.ErrnoException) => {
+        if (err.code === 'EADDRINUSE') {
+          console.log(`Port ${this.port} in use, trying next port...`);
+          this.start(this.port + 1);
+        } else {
+          throw err;
+        }
+      });
+    } catch (error) {
+      console.error('Failed to start server:', error);
+      throw error;
+    }
   }
 
   async stop() {
